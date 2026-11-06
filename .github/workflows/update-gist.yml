@@ -1,0 +1,25 @@
+name: Update fuel stations gist
+
+on:
+  schedule:
+    # Every hour at minute 7 (offset from :00 to avoid the GitHub rush hour).
+    - cron: "7 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Fetch, condense and push to gist
+        run: python fuel2gist.py
+        env:
+          GIST_URL: ${{ vars.GIST }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
