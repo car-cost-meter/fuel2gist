@@ -25,9 +25,9 @@ SOURCE_URL = (
 GIST_FILENAME = "stations.json"
 USER_AGENT = "fuel2gist"
 
-# Canonical fuel list (official ids). Any extra fuel name found in the feed is
-# appended, so indexes in the "fuels" array stay stable.
-FUEL_ORDER = ["Gazole", "SP95", "E85", "GPLc", "E10", "SP98", "SP95-E10"]
+# Alternate names normalized to their canonical fuel (same product at the pump:
+# "SP95-E10" is the legacy id for the fuel now declared as "E10").
+FUEL_ALIASES = {"SP95-E10": "E10"}
 
 
 def http_request(url, method="GET", data=None, headers=None, retries=3):
@@ -109,15 +109,6 @@ def parse_hours(horaires_json):
     return automate, week
 
 
-def fuel_index(names):
-    """Build the ordered fuel list: canonical fuels first, extras appended."""
-    index = list(FUEL_ORDER)
-    for name in names:
-        if name not in index:
-            index.append(name)
-    return index
-
-
 def parse_fuels(record, fuel_idx):
     """Return (priced_fuels, temporary_shortages) for a station record.
 
@@ -130,9 +121,13 @@ def parse_fuels(record, fuel_idx):
         for r in as_list(json.loads(record.get("rupture") or "[]"))
         if isinstance(r, dict)
     ]
-    permanent = {r.get("@nom") for r in ruptures if r.get("@type") == "definitive"}
+    permanent = {
+        FUEL_ALIASES.get(r.get("@nom"), r.get("@nom"))
+        for r in ruptures
+        if r.get("@type") == "definitive"
+    }
     temporary = {
-        r.get("@nom")
+        FUEL_ALIASES.get(r.get("@nom"), r.get("@nom"))
         for r in ruptures
         if r.get("@type") != "definitive" and not r.get("@fin")
     }
@@ -142,7 +137,7 @@ def parse_fuels(record, fuel_idx):
     for price in prices:
         if not isinstance(price, dict):
             continue
-        name = price.get("@nom")
+        name = FUEL_ALIASES.get(price.get("@nom"), price.get("@nom"))
         if (
             name in permanent
             or name not in fuel_idx
@@ -205,8 +200,8 @@ def main():
         for field in ("prix", "rupture"):
             for entry in as_list(json.loads(record.get(field) or "[]")):
                 if isinstance(entry, dict) and entry.get("@nom"):
-                    fuel_names.add(entry["@nom"])
-    fuels = fuel_index(sorted(fuel_names))
+                    fuel_names.add(FUEL_ALIASES.get(entry["@nom"], entry["@nom"]))
+    fuels = sorted(fuel_names)
     fuel_idx = {name: i for i, name in enumerate(fuels)}
 
     stations = [condense(record, fuel_idx) for record in records]

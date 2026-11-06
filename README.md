@@ -51,7 +51,7 @@ https://gist.githubusercontent.com/<user>/<gist_id>/raw/stations.json
   "v": 1,
   "ts": 29899207,
   "src": "https://data.economie.gouv.fr/.../exports/json",
-  "fuels": ["Gazole", "SP95", "E85", "GPLc", "E10", "SP98", "SP95-E10"],
+  "fuels": ["E10", "E85", "GPLc", "Gazole", "SP95", "SP98"],
   "stations": [ ... ]
 }
 ```
