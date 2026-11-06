@@ -74,7 +74,10 @@ def parse_hours(horaires_json):
       - None: station closed that day
       - []:   open, no schedule published (typically 24h)
       - [a, b, ...]: opening slots as minute pairs (open, close) since midnight
-    The whole weekly_hours value is None when no schedule is published at all.
+    The whole weekly_hours value is None when no schedule is published at all
+    — including stations declaring every day as closed: that pattern is a
+    feed artifact of automate-only stations that never declared shop hours
+    (hundreds of them still publish prices), not a real closure.
     """
     if not horaires_json:
         return 0, None
@@ -103,8 +106,9 @@ def parse_hours(horaires_json):
             flat.append(hhmm_to_minutes(slot["@fermeture"]))
         week.append(flat)
 
-    # Collapse the common "open 24/7" case.
-    if all(day == [] for day in week):
+    # Collapse "open 24/7" (all days open without schedule) and "closed 7/7"
+    # (a declaration artifact, not a real closure) to "no schedule published".
+    if all(day == [] for day in week) or all(day is None for day in week):
         week = None
     return automate, week
 

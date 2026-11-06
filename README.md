@@ -38,11 +38,14 @@ GIST_URL="https://gist.github.com/<user>/<gist_id>" GIST_TOKEN=... python fuel2g
 
 ## Using the data
 
-Fetch `stations.json` from the gist's raw URL:
+The file produced by this repository's workflow is published hourly at:
 
 ```
-https://gist.githubusercontent.com/<user>/<gist_id>/raw/stations.json
+https://gist.githubusercontent.com/fathzer/fd0545d020573481d86e9966a48e51fa/raw/stations.json
 ```
+
+If you run your own fork, the raw URL follows the pattern
+`https://gist.githubusercontent.com/<user>/<gist_id>/raw/stations.json`.
 
 ### Format
 
@@ -84,6 +87,10 @@ Each entry is:
   `[480, 720, 840, 1140]` = 08:00–12:00 and 14:00–19:00.
 
 `oh` itself is `null` when no schedule is published at all — treat as 24/7.
+This also covers stations that declare every day as closed: that pattern is
+a known artifact of the government feed (automate-only stations that never
+declared shop hours — hundreds of them still publish prices), so it is
+reported as "no schedule" rather than "permanently closed".
 
 **Fuels (`f`)**: each entry is `[fuelIdx, price, updated]`:
 
