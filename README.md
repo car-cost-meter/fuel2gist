@@ -4,7 +4,9 @@ A lightweight tool that retrieves real-time open data on fuel prices in France o
 
 ## How it works
 
-A GitHub Actions workflow (`.github/workflows/update-gist.yml`) runs every hour and:
+A GitHub Actions workflow (`.github/workflows/update-gist.yml`) runs hourly —
+triggered externally, see [Triggering the workflow](#triggering-the-workflow) —
+and:
 
 1. Downloads the full instantaneous feed from
    [data.economie.gouv.fr](https://data.economie.gouv.fr/explore/dataset/prix-des-carburants-en-france-flux-instantane-v2/)
@@ -35,6 +37,75 @@ You can also run it locally:
 ```sh
 GIST_URL="https://gist.github.com/<user>/<gist_id>" GIST_TOKEN=... python fuel2gist.py
 ```
+
+## Triggering the workflow
+
+The workflow exposes a `workflow_dispatch` trigger, so anything able to POST
+to the GitHub API can run it. This repository does **not** rely on GitHub's
+own `schedule:` event — here's why.
+
+### Why not GitHub `schedule:`
+
+GitHub's cron trigger looks convenient but comes with serious limitations:
+
+- **It is best-effort, not a real cron.** GitHub only documents that runs
+  "may be delayed during periods of high load"; in practice delays of tens
+  of minutes are routine (especially around the top of the hour), and
+  scheduled runs are sometimes skipped entirely — you simply get fewer runs
+  than the schedule implies, with no error, no log, no retry.
+- **It only exists on the default branch.** The schedule is read from the
+  workflow file on the default branch at firing time; pushing it on a
+  feature branch does nothing. Newly registered schedules can also take a
+  long time to be picked up — on this repository, a freshly pushed schedule
+  never fired a single run.
+- **It auto-disables on inactive repositories.** After 60 days without
+  repository activity, GitHub silently disables scheduled workflows (one
+  notification email, then nothing runs until someone re-enables it).
+  This is a structural problem for a set-and-forget pipeline like this one:
+  the whole point is that nothing commits for months — which is exactly
+  what triggers the shutdown.
+
+### Option A — cron-job.org (current setup)
+
+A free [cron-job.org](https://cron-job.org) job calls the dispatch endpoint
+every hour:
+
+| Field | Value |
+|---|---|
+| URL | `https://api.github.com/repos/car-cost-meter/fuel2gist/actions/workflows/update-gist.yml/dispatches` |
+| Method | `POST` |
+| Headers | `Authorization: Bearer <token>`, `Accept: application/vnd.github+json` |
+| Body | `{"ref":"main"}` |
+| Expected status | `204` (empty response) |
+
+Any HTTP-capable scheduler works the same way — e.g. a plain `crontab` entry
+running `curl -X POST` with the same arguments.
+
+### The token problem
+
+The dispatch endpoint requires a token:
+
+- a **fine-grained PAT** limited to the repository with
+  *Actions: Read and write* — minimal blast radius, but bound to a single
+  resource owner (one user **or** one org, so one token per organization) and
+  forced to expire within a year;
+- or a **classic PAT** (`public_repo` is enough for public repositories) —
+  one token covers every organization the user can reach and can be created
+  without expiration, at the price of a broader scope.
+
+Either way, the token is stored on a third-party service, needs periodic
+rotation, and is tied to one person's account — a bus factor of 1.
+
+### Option B — GitHub App + Cloudflare Worker (planned)
+
+The maintenance-free setup, with no personal dependency:
+
+1. A **GitHub App** owned by the organization, granted *Actions: Read and
+   write* and installed on every org needing remote triggers. Its private key
+   never expires and outlives any individual account.
+2. A **Cloudflare Worker** (free tier, built-in cron trigger) that signs a
+   JWT with the app's private key, exchanges it for an installation token and
+   calls the dispatch endpoint — ~40 lines of code, nothing to rotate.
 
 ## Using the data
 
@@ -115,7 +186,7 @@ for (const [id, lat, lon, addr, city, cp, h24, oh, f] of data.stations) {
 
 ## Notes
 
-- Scheduled GitHub Actions may be delayed by a few minutes under load.
+- Freshness is best-effort: check the `ts` field to know how old the data is.
 - The file exceeds 1 MB, so the GitHub API returns it truncated — always fetch
   the **raw** URL above, which serves the full content.
 - License: see [LICENSE](LICENSE). Data is French public open data

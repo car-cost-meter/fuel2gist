@@ -1,9 +1,10 @@
 name: Update fuel stations gist
 
+# Triggered externally (cron-job.org -> workflow_dispatch). GitHub's own
+# `schedule:` event is intentionally not used: it is best-effort (delayed or
+# dropped runs) and auto-disabled after 60 days of repository inactivity.
+# See "Triggering the workflow" in README.md.
 on:
-  schedule:
-    # Every hour at minute 7 (offset from :00 to avoid the GitHub rush hour).
-    - cron: "7 * * * *"
   workflow_dispatch:
 
 permissions: {}
