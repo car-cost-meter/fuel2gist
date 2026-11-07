@@ -206,6 +206,7 @@ def condense(record, fuel_idx, station_map):
         shortages,
         brand_idx,
         unverified,
+        record.get("pop") or "",
     ]
 
 

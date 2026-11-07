@@ -193,6 +193,7 @@ between the government and OSM positions, a confidence metric).
 | 9 | o | Temporarily out-of-stock fuels: `[fuelIdx, ...]` |
 | 10 | b | Brand index into `brands`, `null` when unmapped |
 | 11 | g | `1` when coordinates are the unverified government geocoding (no OSM match), else `0` |
+| 12 | p | Location type from the government feed: `"A"` = motorway service area, `"R"` = regular road |
 
 Coordinates come from OpenStreetMap when the station is mapped there — they
 proved more accurate than the government's geocoded positions. Stations
