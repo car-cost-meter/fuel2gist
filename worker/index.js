@@ -1,5 +1,5 @@
 /**
- * Cloudflare Worker — hourly trigger for the fuel2gist GitHub Actions workflow.
+ * Cloudflare Worker — Trigger for the fuel2gist GitHub Actions workflow.
  *
  * Authenticates as a GitHub App installation (RS256 JWT -> installation
  * token) and calls the workflow_dispatch endpoint. No personal token:
@@ -14,12 +14,17 @@
 const REPO = "car-cost-meter/fuel2gist";
 const API = "https://api.github.com";
 
-// Cron expression -> workflow file. The worker is triggered by several
-// cron triggers (see wrangler.toml) and routes each to its workflow.
-const WORKFLOWS = {
-  "7 * * * *": "update-gist.yml", // hourly: fuel prices -> stations.json
-  "23 4 * * *": "update-brands.yml", // daily: OSM brands -> osm-map.json
-};
+// Cron routing is by frequency, not exact match: a cron with a wildcard hour
+// field (e.g. "12 * * * *") fires hourly -> prices; a pinned hour (e.g.
+// "23 4 * * *") fires daily -> brands map. This survives minute changes on
+// the Cloudflare dashboard.
+const HOURLY_WORKFLOW = "update-gist.yml";
+const DAILY_WORKFLOW = "update-brands.yml";
+
+function workflowFor(cron) {
+  // "min hour dom mon dow" — hourly crons leave the hour field as "*".
+  return cron.split(" ")[1] === "*" ? HOURLY_WORKFLOW : DAILY_WORKFLOW;
+}
 
 const b64url = (buf) =>
   btoa(String.fromCodePoint(...new Uint8Array(buf)))
@@ -95,8 +100,7 @@ async function dispatchWorkflow(env, workflow) {
 export default {
   async scheduled(event, env) {
     // Errors surface as failed entries in the Cron Events log.
-    const workflow = WORKFLOWS[event.cron];
-    if (workflow) await dispatchWorkflow(env, workflow);
+    await dispatchWorkflow(env, workflowFor(event.cron));
   },
 
   // Manual trigger for testing: GET / -> prices workflow,
@@ -104,12 +108,7 @@ export default {
   // want an open trigger endpoint.
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
-    const workflow =
-      path === "/"
-        ? WORKFLOWS["7 * * * *"]
-        : path === "/brands"
-          ? WORKFLOWS["23 4 * * *"]
-          : null;
+    const workflow = path === "/" ? HOURLY_WORKFLOW : path === "/brands" ? DAILY_WORKFLOW : null;
     if (!workflow) return new Response("not found", { status: 404 });
     try {
       return new Response(await dispatchWorkflow(env, workflow));
