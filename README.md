@@ -65,7 +65,7 @@ GitHub's cron trigger looks convenient but comes with serious limitations:
   the whole point is that nothing commits for months — which is exactly
   what triggers the shutdown.
 
-### Option A — cron-job.org (current setup)
+### Option A — cron-job.org (simple external trigger)
 
 A free [cron-job.org](https://cron-job.org) job calls the dispatch endpoint
 every hour:
@@ -96,16 +96,28 @@ The dispatch endpoint requires a token:
 Either way, the token is stored on a third-party service, needs periodic
 rotation, and is tied to one person's account — a bus factor of 1.
 
-### Option B — GitHub App + Cloudflare Worker (planned)
+### Option B — GitHub App + Cloudflare Worker (current setup)
 
-The maintenance-free setup, with no personal dependency:
+The maintenance-free setup actually deployed, with no personal dependency:
 
-1. A **GitHub App** owned by the organization, granted *Actions: Read and
-   write* and installed on every org needing remote triggers. Its private key
-   never expires and outlives any individual account.
-2. A **Cloudflare Worker** (free tier, built-in cron trigger) that signs a
-   JWT with the app's private key, exchanges it for an installation token and
-   calls the dispatch endpoint — ~40 lines of code, nothing to rotate.
+1. A **GitHub App** owned by the organization (`fuel2gist-dispatcher`),
+   granted *Actions: Read and write* and installed on `fuel2gist` only.
+   Its private key never expires and outlives any individual account.
+2. A **Cloudflare Worker** (free tier, cron `7 * * * *`) — code in
+   [`worker/`](worker/). It signs a JWT with the app's private key, exchanges
+   it for an installation token and calls the dispatch endpoint.
+
+Deployment notes:
+
+- `worker/index.js` is the whole dispatcher — runtime APIs only, zero
+  dependencies;
+- `worker/wrangler.toml` versions the worker name, the cron trigger and the
+  non-secret variables (`GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID` are plain
+  identifiers, not credentials);
+- the only real secret, `GITHUB_APP_KEY` (the app's PEM private key), lives
+  in Cloudflare *Variables and Secrets*;
+- a `GET` on the worker URL also fires a dispatch manually — handy for
+  testing (remove the `fetch` handler in `worker/index.js` if unwanted).
 
 ## Using the data
 

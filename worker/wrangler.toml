@@ -1,0 +1,14 @@
+name = "fuel2gist-dispatcher"
+main = "index.js"
+compatibility_date = "2026-11-06"
+
+[triggers]
+crons = ["7 * * * *"]
+
+# Non-secret identifiers — kept in sync with the dashboard's
+# "Variables and Secrets". The real secret, GITHUB_APP_KEY (PEM private
+# key), must only ever be set via `wrangler secret put` or as a Secret
+# in the dashboard — never committed here.
+[vars]
+GITHUB_APP_ID = "5653187"
+GITHUB_INSTALLATION_ID = "179491599"
