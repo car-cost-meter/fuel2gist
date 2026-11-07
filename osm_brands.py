@@ -24,6 +24,7 @@ import math
 import os
 import re
 import sys
+import time
 import urllib.parse
 import urllib.request
 from collections import Counter, defaultdict
@@ -32,6 +33,7 @@ from datetime import datetime, timezone
 OVERPASS_URLS = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
 ]
 OVERPASS_QUERY = """
 [out:json][timeout:90];
@@ -69,19 +71,29 @@ def http_request(url, method="GET", data=None, headers=None, retries=3):
 
 
 def fetch_overpass():
-    """Query Overpass mirrors until one answers."""
+    """Query Overpass mirrors, retrying across the pool until one answers.
+
+    Overpass is a volunteer-run service — transient 502s and read timeouts
+    are common under load, so we retry each mirror several times with a
+    growing delay between rounds.
+    """
     body = ("data=" + urllib.parse.quote(OVERPASS_QUERY)).encode()
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/x-www-form-urlencoded",
     }
     last_error = None
-    for url in OVERPASS_URLS:
-        try:
-            return json.loads(http_request(url, "POST", body, headers, retries=1))
-        except Exception as exc:  # noqa: BLE001 - try the next mirror
-            last_error = exc
-            print(f"Overpass mirror failed ({url}): {exc}")
+    for attempt in range(4):
+        for url in OVERPASS_URLS:
+            try:
+                return json.loads(
+                    http_request(url, "POST", body, headers, retries=1)
+                )
+            except Exception as exc:  # noqa: BLE001 - try the next mirror
+                last_error = exc
+                print(f"Overpass {url} attempt {attempt + 1} failed: {exc}")
+        if attempt < 3:
+            time.sleep(30 * (attempt + 1))
     raise RuntimeError(f"All Overpass mirrors failed: {last_error}")
 
 
