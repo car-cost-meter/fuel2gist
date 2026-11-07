@@ -3,7 +3,7 @@ main = "index.js"
 compatibility_date = "2026-11-06"
 
 [triggers]
-crons = ["7 * * * *"]
+crons = ["7 * * * *", "23 4 * * *"]
 
 # Non-secret identifiers — kept in sync with the dashboard's
 # "Variables and Secrets". The real secret, GITHUB_APP_KEY (PEM private

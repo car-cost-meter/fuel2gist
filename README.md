@@ -4,21 +4,41 @@ A lightweight tool that retrieves real-time open data on fuel prices in France o
 
 ## How it works
 
-A GitHub Actions workflow (`.github/workflows/update-gist.yml`) runs hourly —
-triggered externally, see [Triggering the workflow](#triggering-the-workflow) —
-and:
+Two GitHub Actions workflows — both triggered externally, see
+[Triggering the workflow](#triggering-the-workflow) — publish two files to a
+GitHub Gist:
+
+### Hourly: `stations.json` (`update-gist.yml` + `fuel2gist.py`)
 
 1. Downloads the full instantaneous feed from
    [data.economie.gouv.fr](https://data.economie.gouv.fr/explore/dataset/prix-des-carburants-en-france-flux-instantane-v2/)
    (~4.7 MB, ~9,800 stations, one request, no pagination).
 2. Condenses each station down to: address, city, postal code, GPS coordinates,
-   opening hours, 24/7 credit-card automate availability, and for every fuel:
-   its price and last-update time. Fuels under permanent ("definitive") shortage
-   are dropped; fuels under temporary shortage are kept in a separate list.
-3. Pushes the result (~1.6 MB minified JSON) as `stations.json` to a GitHub Gist.
+   opening hours, 24/7 credit-card automate availability, brand (via the OSM
+   mapping below), and for every fuel: its price and last-update time. Fuels
+   under permanent ("definitive") shortage are dropped; fuels under temporary
+   shortage are kept in a separate list. Stations with no prices at all are
+   excluded.
+3. Pushes the result (~1.7 MB minified JSON) as `stations.json` to the gist.
 
-The pipeline is implemented in `fuel2gist.py`, a single Python script with no
-dependency outside the standard library.
+### Daily: `osm-map.json` (`update-brands.yml` + `osm_brands.py`)
+
+The government feed carries no station name or brand. OpenStreetMap solves
+this: contributors tag fuel stations with `ref:FR:prix-carburants` — the
+government station id — giving an **exact, ambiguity-free link** (~99.5%
+coverage). A bonus: OSM coordinates proved *more accurate* than the
+government's geocoded positions, so they are used for station locations.
+
+1. Queries the Overpass API for every `node|way|relation` tagged
+   `ref:FR:prix-carburants` (one bulk request, ~90 s).
+2. Resolves each station's identity (`brand` > `name` > `operator`), with
+   spelling normalized data-driven (canonical form grouped by normalized
+   key, displayed as its most frequent spelling).
+3. Pushes `osm-map.json` to the same gist — the hourly pipeline fetches it
+   back (and degrades gracefully to no brands if it is unavailable).
+
+Both pipelines are single Python scripts with no dependency outside the
+standard library.
 
 ## Setup
 
@@ -29,8 +49,8 @@ Create a (secret) GitHub gist first, then configure the repository:
 | Repository variable | `GIST` | Full URL of the gist, e.g. `https://gist.github.com/<user>/<gist_id>` |
 | Repository secret | `GIST_TOKEN` | Fine-grained PAT or classic token with the `gist` scope |
 
-Then enable the workflow (runs at minute 7 of every hour) or trigger it manually
-with *Run workflow*.
+Then trigger the workflows manually with *Run workflow* (external scheduling
+described below).
 
 You can also run it locally:
 
@@ -103,21 +123,24 @@ The maintenance-free setup actually deployed, with no personal dependency:
 1. A **GitHub App** owned by the organization (`fuel2gist-dispatcher`),
    granted *Actions: Read and write* and installed on `fuel2gist` only.
    Its private key never expires and outlives any individual account.
-2. A **Cloudflare Worker** (free tier, cron `7 * * * *`) — code in
-   [`worker/`](worker/). It signs a JWT with the app's private key, exchanges
-   it for an installation token and calls the dispatch endpoint.
+2. A **Cloudflare Worker** (free tier) — code in [`worker/`](worker/). It
+   signs a JWT with the app's private key, exchanges it for an installation
+   token and calls the dispatch endpoint. Two cron triggers route to the two
+   workflows via `event.cron`: `7 * * * *` hourly → `update-gist.yml`,
+   `23 4 * * *` daily → `update-brands.yml`.
 
 Deployment notes:
 
 - `worker/index.js` is the whole dispatcher — runtime APIs only, zero
   dependencies;
-- `worker/wrangler.toml` versions the worker name, the cron trigger and the
+- `worker/wrangler.toml` versions the worker name, the cron triggers and the
   non-secret variables (`GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID` are plain
   identifiers, not credentials);
 - the only real secret, `GITHUB_APP_KEY` (the app's PEM private key), lives
   in Cloudflare *Variables and Secrets*;
-- a `GET` on the worker URL also fires a dispatch manually — handy for
-  testing (remove the `fetch` handler in `worker/index.js` if unwanted).
+- `GET /` on the worker URL fires the hourly dispatch manually, `GET
+  /brands` the daily one — handy for testing (remove the `fetch` handler in
+  `worker/index.js` if unwanted).
 
 ## Using the data
 
@@ -130,6 +153,11 @@ https://gist.githubusercontent.com/fathzer/fd0545d020573481d86e9966a48e51fa/raw/
 If you run your own fork, the raw URL follows the pattern
 `https://gist.githubusercontent.com/<user>/<gist_id>/raw/stations.json`.
 
+The same gist also hosts **`osm-map.json`** (updated daily), the raw
+OSM→government mapping — mostly useful for auditing: `{"v", "ts", "brands",
+"map"}` where `map[id] = [brandIdx, lat, lon, distM]` (`distM` = metres
+between the government and OSM positions, a confidence metric).
+
 ### Format
 
 ```json
@@ -138,6 +166,7 @@ If you run your own fork, the raw URL follows the pattern
   "ts": 29899207,
   "src": "https://data.economie.gouv.fr/.../exports/json",
   "fuels": ["E10", "E85", "GPLc", "Gazole", "SP95", "SP98"],
+  "brands": ["Agip", "Avia", "Carrefour", ...],
   "stations": [ ... ]
 }
 ```
@@ -145,6 +174,9 @@ If you run your own fork, the raw URL follows the pattern
 - `v`: format version.
 - `ts`: generation timestamp, in **minutes since the Unix epoch (UTC)**.
 - `fuels`: ordered fuel names. Fuel indexes used inside stations refer to this array.
+- `brands`: ordered brand names from the OSM mapping (may be empty if the
+  daily job has not run yet). Brand indexes used inside stations refer to
+  this array.
 - `stations`: one array per station, positional fields:
 
 | # | Field | Description |
@@ -159,6 +191,12 @@ If you run your own fork, the raw URL follows the pattern
 | 7 | oh | Opening hours, see below (`null` = open 24/7 or not published) |
 | 8 | f | Priced fuels: `[[fuelIdx, price, updated], ...]` |
 | 9 | o | Temporarily out-of-stock fuels: `[fuelIdx, ...]` |
+| 10 | b | Brand index into `brands`, `null` when unmapped |
+| 11 | g | `1` when coordinates are the unverified government geocoding (no OSM match), else `0` |
+
+Coordinates come from OpenStreetMap when the station is mapped there — they
+proved more accurate than the government's geocoded positions. Stations
+with no prices are excluded entirely.
 
 **Opening hours (`oh`)**: 7 entries, Monday (index 0) to Sunday (index 6).
 Each entry is:
@@ -186,12 +224,13 @@ reported as "no schedule" rather than "permanently closed".
 ```js
 const data = await (await fetch(RAW_URL)).json();
 
-for (const [id, lat, lon, addr, city, cp, h24, oh, f] of data.stations) {
+for (const [id, lat, lon, addr, city, cp, h24, oh, f, o, b, g] of data.stations) {
+  const brand = b === null ? "?" : data.brands[b];
   for (const [fuelIdx, price, updated] of f) {
     const fuel = data.fuels[fuelIdx];
     const euros = price / 1000;
     const when = new Date(updated * 60000);
-    console.log(`${addr}, ${city}: ${fuel} = ${euros} €/L (${when})`);
+    console.log(`${brand} — ${addr}, ${city}: ${fuel} = ${euros} €/L (${when})`);
   }
 }
 ```

@@ -12,8 +12,14 @@
  */
 
 const REPO = "car-cost-meter/fuel2gist";
-const WORKFLOW = "update-gist.yml";
 const API = "https://api.github.com";
+
+// Cron expression -> workflow file. The worker is triggered by several
+// cron triggers (see wrangler.toml) and routes each to its workflow.
+const WORKFLOWS = {
+  "7 * * * *": "update-gist.yml", // hourly: fuel prices -> stations.json
+  "23 4 * * *": "update-brands.yml", // daily: OSM brands -> osm-map.json
+};
 
 const b64url = (buf) =>
   btoa(String.fromCodePoint(...new Uint8Array(buf)))
@@ -58,7 +64,7 @@ const ghHeaders = (auth) => ({
   "User-Agent": "fuel2gist-dispatcher",
 });
 
-async function dispatchWorkflow(env) {
+async function dispatchWorkflow(env, workflow) {
   const jwt = await appJwt(env);
 
   // Exchange the app JWT for an installation access token (~1h validity).
@@ -73,7 +79,7 @@ async function dispatchWorkflow(env) {
 
   // Fire the workflow_dispatch event.
   const res = await fetch(
-    `${API}/repos/${REPO}/actions/workflows/${WORKFLOW}/dispatches`,
+    `${API}/repos/${REPO}/actions/workflows/${workflow}/dispatches`,
     {
       method: "POST",
       headers: { ...ghHeaders(token), "Content-Type": "application/json" },
@@ -89,17 +95,24 @@ async function dispatchWorkflow(env) {
 export default {
   async scheduled(event, env) {
     // Errors surface as failed entries in the Cron Events log.
-    await dispatchWorkflow(env);
+    const workflow = WORKFLOWS[event.cron];
+    if (workflow) await dispatchWorkflow(env, workflow);
   },
 
-  // Manual trigger for testing: GET / on the worker URL fires a dispatch.
-  // Remove this handler if you don't want an open trigger endpoint.
+  // Manual trigger for testing: GET / -> prices workflow,
+  // GET /brands -> brands map workflow. Remove this handler if you don't
+  // want an open trigger endpoint.
   async fetch(request, env) {
-    if (new URL(request.url).pathname !== "/") {
-      return new Response("not found", { status: 404 });
-    }
+    const path = new URL(request.url).pathname;
+    const workflow =
+      path === "/"
+        ? WORKFLOWS["7 * * * *"]
+        : path === "/brands"
+          ? WORKFLOWS["23 4 * * *"]
+          : null;
+    if (!workflow) return new Response("not found", { status: 404 });
     try {
-      return new Response(await dispatchWorkflow(env));
+      return new Response(await dispatchWorkflow(env, workflow));
     } catch (err) {
       return new Response(String(err), { status: 500 });
     }

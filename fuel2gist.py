@@ -23,6 +23,7 @@ SOURCE_URL = (
     "prix-des-carburants-en-france-flux-instantane-v2/exports/json"
 )
 GIST_FILENAME = "stations.json"
+MAP_FILENAME = "osm-map.json"
 USER_AGENT = "fuel2gist"
 
 # Alternate names normalized to their canonical fuel (same product at the pump:
@@ -46,6 +47,13 @@ def http_request(url, method="GET", data=None, headers=None, retries=3):
             if attempt < retries - 1:
                 time.sleep(5 * (attempt + 1))
     raise RuntimeError(f"Request failed after {retries} attempts: {last_error}")
+
+
+def gist_raw_url(gist_url, filename):
+    """gist page URL -> raw file URL.
+    https://gist.github.com/<user>/<id> -> https://gist.githubusercontent.com/<user>/<id>/raw/<file>"""
+    parts = gist_url.rstrip("/").split("/")
+    return f"https://gist.githubusercontent.com/{parts[-2]}/{parts[-1]}/raw/{filename}"
 
 
 def as_list(value):
@@ -161,22 +169,34 @@ def parse_fuels(record, fuel_idx):
     return priced, shortages
 
 
-def condense(record, fuel_idx):
-    geom = record.get("geom") or {}
-    lat = geom.get("lat")
-    lon = geom.get("lon")
-    if lat is None and record.get("latitude"):
-        lat = float(record["latitude"]) / 100000
-    if lon is None and record.get("longitude"):
-        lon = float(record["longitude"]) / 100000
-
+def condense(record, fuel_idx, station_map):
     automate, week = parse_hours(record.get("horaires"))
     priced, shortages = parse_fuels(record, fuel_idx)
+    if not priced:
+        # No prices at all -> station of no interest (closed / fully out).
+        return None
+
+    # OSM-verified position and brand when the station is mapped, else the
+    # government geocoding flagged as unverified.
+    mapped = station_map.get(str(record["id"]))
+    if mapped is not None:
+        brand_idx, lat, lon = mapped[0], mapped[1], mapped[2]
+        unverified = 0
+    else:
+        brand_idx, unverified = None, 1
+        geom = record.get("geom") or {}
+        lat, lon = geom.get("lat"), geom.get("lon")
+        if lat is None and record.get("latitude"):
+            lat = float(record["latitude"]) / 100000
+        if lon is None and record.get("longitude"):
+            lon = float(record["longitude"]) / 100000
+        lat = round(lat, 5) if lat is not None else None
+        lon = round(lon, 5) if lon is not None else None
 
     return [
         record["id"],
-        round(lat, 5) if lat is not None else None,
-        round(lon, 5) if lon is not None else None,
+        lat,
+        lon,
         record.get("adresse") or "",
         record.get("ville") or "",
         record.get("cp") or "",
@@ -184,6 +204,8 @@ def condense(record, fuel_idx):
         week,
         priced,
         shortages,
+        brand_idx,
+        unverified,
     ]
 
 
@@ -208,13 +230,25 @@ def main():
     fuels = sorted(fuel_names)
     fuel_idx = {name: i for i, name in enumerate(fuels)}
 
-    stations = [condense(record, fuel_idx) for record in records]
+    # OSM mapping produced daily by osm_brands.py (same gist). Missing or
+    # stale file -> publish prices without brands rather than failing.
+    brands, station_map = [], {}
+    try:
+        mapping = json.loads(http_request(gist_raw_url(gist_url, MAP_FILENAME)))
+        brands = mapping.get("brands") or []
+        station_map = mapping.get("map") or {}
+        print(f"Loaded OSM map: {len(station_map)} stations, {len(brands)} brands")
+    except Exception as exc:  # noqa: BLE001 - degrade gracefully
+        print(f"OSM map unavailable, publishing without brands: {exc}")
+
+    stations = [s for r in records if (s := condense(r, fuel_idx, station_map))]
 
     payload = {
         "v": 1,
         "ts": int(datetime.now(timezone.utc).timestamp() // 60),
         "src": SOURCE_URL,
         "fuels": fuels,
+        "brands": brands,
         "stations": stations,
     }
     content = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))

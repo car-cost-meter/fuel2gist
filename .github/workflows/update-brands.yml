@@ -1,0 +1,25 @@
+name: Update station brands map
+
+# Triggered externally once a day (Cloudflare Worker -> workflow_dispatch).
+# Builds osm-map.json: OSM `ref:FR:prix-carburants` -> gov id mapping with
+# brand/name and verified coordinates. See "Triggering the workflow" in README.
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Fetch OSM refs and push map to gist
+        run: python osm_brands.py
+        env:
+          GIST_URL: ${{ vars.GIST }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
